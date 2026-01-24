@@ -19,4 +19,4 @@ For questions about privacy or the extension, contact: mindset.extension.beta@gm
 - **Name:** Mindset - Digital Diet Tracker
 - **Purpose:** Content analysis and digital diet tracking
 - **Data Processing:** 100% local, no external transmission
-- **Platform:** Chrome Web Store 
+- **Platform:** Chrome Web Store
