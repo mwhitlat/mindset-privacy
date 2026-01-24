@@ -1096,29 +1096,39 @@ class DashboardManager {
       minute: '2-digit'
     }) : '-';
 
-    const credibility = visit.credibility || 6;
-    let credibilityClass = 'medium';
-    let rowClass = 'credibility-medium';
-    if (credibility >= 8) {
-      credibilityClass = 'high';
-      rowClass = 'credibility-high';
-    } else if (credibility < 6) {
-      credibilityClass = 'low';
-      rowClass = 'credibility-low';
+    const credibility = visit.credibility;
+    const credibilityKnown = visit.credibilityKnown !== false && credibility !== null;
+    let credibilityClass = 'unknown';
+    let rowClass = '';
+    let credibilityDisplay = '?';
+
+    if (credibilityKnown && credibility !== null) {
+      credibilityDisplay = credibility.toFixed(1);
+      if (credibility >= 8) {
+        credibilityClass = 'high';
+        rowClass = 'credibility-high';
+      } else if (credibility >= 6) {
+        credibilityClass = 'medium';
+        rowClass = 'credibility-medium';
+      } else {
+        credibilityClass = 'low';
+        rowClass = 'credibility-low';
+      }
     }
 
     const category = visit.category || 'other';
     const tone = visit.tone || 'neutral';
     const bias = visit.politicalBias || 'unknown';
     const duration = visit.duration ? `${visit.duration}m` : '-';
+    const displayDomain = visit.sourceName || visit.domain;
 
     return `
       <tr class="${rowClass}">
         <td>${timestamp}</td>
-        <td class="domain-cell" title="${visit.domain}">${visit.domain}</td>
+        <td class="domain-cell" title="${visit.domain}">${displayDomain}</td>
         <td class="title-cell" title="${visit.title || '-'}">${visit.title || '-'}</td>
         <td><span class="category-badge ${category}">${this.formatCategoryName(category)}</span></td>
-        <td><span class="credibility-score ${credibilityClass}">${credibility.toFixed(1)}</span></td>
+        <td><span class="credibility-score ${credibilityClass}">${credibilityDisplay}</span></td>
         <td><span class="tone-badge ${tone}">${tone}</span></td>
         <td><span class="bias-badge ${bias}">${bias}</span></td>
         <td>${duration}</td>

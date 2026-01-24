@@ -11,18 +11,24 @@ class MindsetTracker {
     this.maxRequestsPerMinute = 60; // Rate limiting
     this.encryptionEnabled = false;
     this.encryptionKey = null;
-    
+
+    // Media sources database
+    this.mediaSources = null;
+
     // Engagement hooks
     this.notificationCooldowns = new Map();
     this.lastBadgeUpdate = 0;
     this.currentSessionScore = 7.0;
-    
+
     this.init().catch(error => {
       console.error('Failed to initialize MindsetTracker:', error);
     });
   }
 
   async init() {
+    // Load media sources database
+    await this.loadMediaSources();
+
     // Load tracking state from storage
     try {
       const result = await chrome.storage.local.get(['isTracking', 'userData', 'encryptedData', 'encryptionEnabled']);
@@ -289,16 +295,19 @@ class MindsetTracker {
     const sanitizedPath = this.sanitizeText(path);
     const sanitizedTitle = this.sanitizeText(title);
     
+    const credibility = this.assessCredibility(sanitizedDomain);
     const visitData = {
       domain: sanitizedDomain,
       path: sanitizedPath,
       title: sanitizedTitle,
       timestamp: Date.now(),
       duration: 0,
-      category: this.categorizeContent(sanitizedDomain, sanitizedPath, sanitizedTitle),
-      credibility: this.assessCredibility(sanitizedDomain),
+      category: this.getSourceCategory(sanitizedDomain) || this.categorizeContent(sanitizedDomain, sanitizedPath, sanitizedTitle),
+      credibility: credibility,
+      credibilityKnown: credibility !== null,
       politicalBias: this.assessPoliticalBias(sanitizedDomain),
-      tone: this.assessTone(sanitizedTitle)
+      tone: this.assessTone(sanitizedTitle),
+      sourceName: this.getSourceName(sanitizedDomain)
     };
 
     // Update current session
@@ -318,16 +327,19 @@ class MindsetTracker {
   }
 
   analyzePageContent(domain, path, content, title) {
+    const credibility = this.assessCredibility(domain);
     const visitData = {
       domain,
       path,
       title,
       timestamp: Date.now(),
       duration: 0,
-      category: this.categorizeContent(domain, path, title),
-      credibility: this.assessCredibility(domain),
+      category: this.getSourceCategory(domain) || this.categorizeContent(domain, path, title),
+      credibility: credibility,
+      credibilityKnown: credibility !== null,
       politicalBias: this.assessPoliticalBias(domain),
-      tone: this.assessTone(title, content)
+      tone: this.assessTone(title, content),
+      sourceName: this.getSourceName(domain)
     };
 
     // Update current session
@@ -386,65 +398,86 @@ class MindsetTracker {
     return 'other';
   }
 
-  assessCredibility(domain) {
+  async loadMediaSources() {
+    try {
+      const response = await fetch(chrome.runtime.getURL('media-sources.json'));
+      const data = await response.json();
+      this.mediaSources = data.domains;
+      console.log(`Loaded ${Object.keys(this.mediaSources).length} media sources`);
+    } catch (error) {
+      console.error('Failed to load media sources database:', error);
+      this.mediaSources = {};
+    }
+  }
+
+  getSourceInfo(domain) {
+    if (!this.mediaSources) return null;
+
     const domainLower = domain.toLowerCase();
-    
-    // High credibility sources
-    if (domainLower.includes('nytimes') || domainLower.includes('reuters') || 
-        domainLower.includes('bbc') || domainLower.includes('ap.org') ||
-        domainLower.includes('npr.org') || domainLower.includes('wsj.com')) {
-      return 9.5;
+
+    // Try exact match first
+    if (this.mediaSources[domainLower]) {
+      return this.mediaSources[domainLower];
     }
 
-    // Medium credibility sources
-    if (domainLower.includes('cnn') || domainLower.includes('foxnews') || 
-        domainLower.includes('usatoday') || domainLower.includes('latimes')) {
-      return 7.0;
+    // Try without www.
+    const withoutWww = domainLower.replace(/^www\./, '');
+    if (this.mediaSources[withoutWww]) {
+      return this.mediaSources[withoutWww];
     }
 
-    // Social media (lower credibility for news)
-    if (domainLower.includes('facebook') || domainLower.includes('twitter') || 
-        domainLower.includes('reddit')) {
-      return 5.0;
+    // Try to find partial match (for subdomains like news.google.com)
+    for (const [sourceDomain, info] of Object.entries(this.mediaSources)) {
+      if (domainLower.endsWith('.' + sourceDomain) || domainLower === sourceDomain) {
+        return info;
+      }
     }
 
-    return 6.0; // Default medium credibility
+    return null;
+  }
+
+  assessCredibility(domain) {
+    const sourceInfo = this.getSourceInfo(domain);
+
+    if (sourceInfo && sourceInfo.credibility !== undefined) {
+      return sourceInfo.credibility;
+    }
+
+    // Fallback for unknown sources
+    // TODO: Future LLM integration point for unknown domains
+    return null; // Return null to indicate unknown
   }
 
   assessPoliticalBias(domain) {
-    const domainLower = domain.toLowerCase();
-    
-    // Liberal sources
-    if (domainLower.includes('nytimes') || domainLower.includes('cnn') || 
-        domainLower.includes('npr.org') || domainLower.includes('msnbc') ||
-        domainLower.includes('washingtonpost') || domainLower.includes('huffpost') ||
-        domainLower.includes('vox.com') || domainLower.includes('slate') ||
-        domainLower.includes('motherjones') || domainLower.includes('dailykos') ||
-        domainLower.includes('thinkprogress') || domainLower.includes('talkingpointsmemo')) {
-      return 'liberal';
+    const sourceInfo = this.getSourceInfo(domain);
+
+    if (sourceInfo && sourceInfo.bias) {
+      return sourceInfo.bias;
     }
 
-    // Conservative sources
-    if (domainLower.includes('foxnews') || domainLower.includes('wsj.com') || 
-        domainLower.includes('nationalreview') || domainLower.includes('breitbart') ||
-        domainLower.includes('newsmax') || domainLower.includes('dailywire') ||
-        domainLower.includes('theblaze') || domainLower.includes('townhall') ||
-        domainLower.includes('washingtontimes') || domainLower.includes('nypost') ||
-        domainLower.includes('washingtonexaminer') || domainLower.includes('freebeacon')) {
-      return 'conservative';
-    }
-
-    // Centrist sources
-    if (domainLower.includes('reuters') || domainLower.includes('ap.org') || 
-        domainLower.includes('bbc') || domainLower.includes('usatoday') ||
-        domainLower.includes('nbcnews') || domainLower.includes('abcnews') ||
-        domainLower.includes('cbsnews') || domainLower.includes('pbs.org') ||
-        domainLower.includes('bloomberg') || domainLower.includes('marketwatch') ||
-        domainLower.includes('economist') || domainLower.includes('time.com')) {
-      return 'centrist';
-    }
-
+    // Fallback for unknown sources
+    // TODO: Future LLM integration point for unknown domains
     return 'unknown';
+  }
+
+  getSourceCategory(domain) {
+    const sourceInfo = this.getSourceInfo(domain);
+
+    if (sourceInfo && sourceInfo.category) {
+      return sourceInfo.category;
+    }
+
+    return null;
+  }
+
+  getSourceName(domain) {
+    const sourceInfo = this.getSourceInfo(domain);
+
+    if (sourceInfo && sourceInfo.name) {
+      return sourceInfo.name;
+    }
+
+    return domain;
   }
 
   assessTone(title, content = '') {
@@ -830,16 +863,19 @@ class MindsetTracker {
           const title = this.sanitizeText(item.title || '');
 
           // Create visit data
+          const credibility = this.assessCredibility(domain);
           const visitData = {
             domain: domain,
             path: path,
             title: title,
             timestamp: item.lastVisitTime || Date.now(),
             duration: 0,  // Unknown for historical data
-            category: this.categorizeContent(domain, path, title),
-            credibility: this.assessCredibility(domain),
+            category: this.getSourceCategory(domain) || this.categorizeContent(domain, path, title),
+            credibility: credibility,
+            credibilityKnown: credibility !== null,
             politicalBias: this.assessPoliticalBias(domain),
             tone: this.assessTone(title),
+            sourceName: this.getSourceName(domain),
             imported: true  // Mark as imported
           };
 
