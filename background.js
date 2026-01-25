@@ -15,6 +15,13 @@ class MindsetTracker {
     // Media sources database
     this.mediaSources = null;
 
+    // Echo chamber detection
+    this.recentBiasHistory = []; // Track last N articles' bias
+    this.maxBiasHistory = 10;    // How many recent articles to track
+    this.echoChamberThreshold = 0.7; // 70% same-bias triggers alert
+    this.lastEchoChamberAlert = 0;
+    this.echoChamberAlertCooldown = 1800000; // 30 minutes between alerts
+
     // Engagement hooks
     this.notificationCooldowns = new Map();
     this.lastBadgeUpdate = 0;
@@ -539,7 +546,15 @@ class MindsetTracker {
       
       // Calculate scores weekly
       this.calculateScores(weekKey);
-      
+
+      // Echo chamber detection
+      if (visitData.politicalBias && visitData.politicalBias !== 'unknown') {
+        const echoChamberStatus = this.trackBiasHistory(visitData.politicalBias);
+        if (echoChamberStatus.isEchoChamber || echoChamberStatus.consecutiveCount >= 5) {
+          this.showEchoChamberAlert(echoChamberStatus);
+        }
+      }
+
       // Engagement hooks
       this.checkAndShowNotifications(visitData);
       this.updateSessionInsights();
@@ -671,21 +686,273 @@ class MindsetTracker {
   calculatePoliticalBalanceScore(weekData) {
     const visits = weekData.visits;
     if (visits.length === 0) return 0;
-    
+
     const biasCounts = { liberal: 0, conservative: 0, centrist: 0, unknown: 0 };
     visits.forEach(visit => {
       biasCounts[visit.politicalBias] = (biasCounts[visit.politicalBias] || 0) + 1;
     });
-    
+
     const total = visits.length;
     const liberalRatio = biasCounts.liberal / total;
     const conservativeRatio = biasCounts.conservative / total;
     const centristRatio = biasCounts.centrist / total;
-    
+
     // Score based on diversity: more diverse = higher score
     const diversity = 1 - Math.max(liberalRatio, conservativeRatio);
     const score = (diversity * 8) + (centristRatio * 2);
     return Math.round(score * 10) / 10;
+  }
+
+  // ==================== Echo Chamber Detection ====================
+
+  /**
+   * Analyze political consumption for a given time period
+   * Returns detailed breakdown and echo chamber status
+   */
+  analyzePoliticalConsumption(visits) {
+    if (!visits || visits.length === 0) {
+      return {
+        total: 0,
+        breakdown: { left: 0, right: 0, center: 0, unknown: 0 },
+        percentages: { left: 0, right: 0, center: 0, unknown: 0 },
+        dominantBias: null,
+        isEchoChamber: false,
+        echoChamberSeverity: 0,
+        balanceScore: 5
+      };
+    }
+
+    // Map bias labels to simplified categories
+    const biasMapping = {
+      'far-left': 'left',
+      'left': 'left',
+      'left-center': 'left',
+      'center': 'center',
+      'right-center': 'right',
+      'right': 'right',
+      'far-right': 'right',
+      'centrist': 'center',
+      'liberal': 'left',
+      'conservative': 'right',
+      'unknown': 'unknown',
+      'varies': 'unknown'
+    };
+
+    const breakdown = { left: 0, right: 0, center: 0, unknown: 0 };
+
+    visits.forEach(visit => {
+      const bias = visit.politicalBias || 'unknown';
+      const category = biasMapping[bias] || 'unknown';
+      breakdown[category]++;
+    });
+
+    const total = visits.length;
+    const knownTotal = breakdown.left + breakdown.right + breakdown.center;
+
+    const percentages = {
+      left: total > 0 ? (breakdown.left / total) * 100 : 0,
+      right: total > 0 ? (breakdown.right / total) * 100 : 0,
+      center: total > 0 ? (breakdown.center / total) * 100 : 0,
+      unknown: total > 0 ? (breakdown.unknown / total) * 100 : 0
+    };
+
+    // Determine dominant bias (only considering known sources)
+    let dominantBias = null;
+    let maxCount = 0;
+    ['left', 'right', 'center'].forEach(bias => {
+      if (breakdown[bias] > maxCount) {
+        maxCount = breakdown[bias];
+        dominantBias = bias;
+      }
+    });
+
+    // Calculate echo chamber severity
+    // Severity is high when one side dominates and the other is absent
+    let echoChamberSeverity = 0;
+    let isEchoChamber = false;
+
+    if (knownTotal >= 3) { // Need at least 3 known sources to judge
+      const leftRatio = breakdown.left / knownTotal;
+      const rightRatio = breakdown.right / knownTotal;
+
+      // Echo chamber if >70% one side and <10% other side
+      if (leftRatio >= 0.7 && rightRatio <= 0.1) {
+        isEchoChamber = true;
+        echoChamberSeverity = Math.min(100, Math.round((leftRatio - 0.5) * 200));
+      } else if (rightRatio >= 0.7 && leftRatio <= 0.1) {
+        isEchoChamber = true;
+        echoChamberSeverity = Math.min(100, Math.round((rightRatio - 0.5) * 200));
+      }
+    }
+
+    // Calculate balance score (0-10, higher is better)
+    let balanceScore = 5;
+    if (knownTotal > 0) {
+      const leftRatio = breakdown.left / knownTotal;
+      const rightRatio = breakdown.right / knownTotal;
+      const centerRatio = breakdown.center / knownTotal;
+
+      // Perfect balance would be ~33% each
+      // Score decreases as one side dominates
+      const imbalance = Math.abs(leftRatio - rightRatio);
+      balanceScore = Math.max(0, 10 - (imbalance * 10) + (centerRatio * 2));
+      balanceScore = Math.round(balanceScore * 10) / 10;
+    }
+
+    return {
+      total,
+      breakdown,
+      percentages,
+      dominantBias,
+      isEchoChamber,
+      echoChamberSeverity,
+      balanceScore
+    };
+  }
+
+  /**
+   * Track recent article bias for real-time echo chamber detection
+   */
+  trackBiasHistory(politicalBias) {
+    // Map to simplified category
+    const biasMapping = {
+      'far-left': 'left', 'left': 'left', 'left-center': 'left',
+      'center': 'center', 'centrist': 'center',
+      'right-center': 'right', 'right': 'right', 'far-right': 'right',
+      'liberal': 'left', 'conservative': 'right'
+    };
+
+    const simplifiedBias = biasMapping[politicalBias] || 'unknown';
+
+    // Only track known biases for echo chamber detection
+    if (simplifiedBias !== 'unknown') {
+      this.recentBiasHistory.push({
+        bias: simplifiedBias,
+        timestamp: Date.now()
+      });
+
+      // Keep only recent history
+      if (this.recentBiasHistory.length > this.maxBiasHistory) {
+        this.recentBiasHistory.shift();
+      }
+    }
+
+    return this.checkRealtimeEchoChamber();
+  }
+
+  /**
+   * Check if recent browsing forms an echo chamber
+   */
+  checkRealtimeEchoChamber() {
+    if (this.recentBiasHistory.length < 5) {
+      return { isEchoChamber: false };
+    }
+
+    const counts = { left: 0, right: 0, center: 0 };
+    this.recentBiasHistory.forEach(item => {
+      counts[item.bias]++;
+    });
+
+    const total = this.recentBiasHistory.length;
+    const leftRatio = counts.left / total;
+    const rightRatio = counts.right / total;
+
+    let isEchoChamber = false;
+    let dominantBias = null;
+    let consecutiveCount = 0;
+
+    // Check for dominant bias
+    if (leftRatio >= this.echoChamberThreshold) {
+      isEchoChamber = true;
+      dominantBias = 'left';
+    } else if (rightRatio >= this.echoChamberThreshold) {
+      isEchoChamber = true;
+      dominantBias = 'right';
+    }
+
+    // Check for consecutive same-bias articles
+    if (this.recentBiasHistory.length >= 3) {
+      const lastBias = this.recentBiasHistory[this.recentBiasHistory.length - 1].bias;
+      consecutiveCount = 1;
+
+      for (let i = this.recentBiasHistory.length - 2; i >= 0; i--) {
+        if (this.recentBiasHistory[i].bias === lastBias) {
+          consecutiveCount++;
+        } else {
+          break;
+        }
+      }
+    }
+
+    return {
+      isEchoChamber,
+      dominantBias,
+      counts,
+      total,
+      consecutiveCount,
+      leftPercent: Math.round(leftRatio * 100),
+      rightPercent: Math.round(rightRatio * 100),
+      centerPercent: Math.round((counts.center / total) * 100)
+    };
+  }
+
+  /**
+   * Show echo chamber alert if conditions are met
+   */
+  async showEchoChamberAlert(echoChamberStatus) {
+    const now = Date.now();
+
+    // Check cooldown
+    if (now - this.lastEchoChamberAlert < this.echoChamberAlertCooldown) {
+      return;
+    }
+
+    if (!this.userData?.settings?.echoChamberAlerts) {
+      return;
+    }
+
+    let message = '';
+    let title = '';
+
+    if (echoChamberStatus.consecutiveCount >= 5) {
+      // Alert for consecutive same-bias content
+      const biasLabel = echoChamberStatus.dominantBias === 'left' ? 'left-leaning' : 'right-leaning';
+      title = 'Echo Chamber Alert';
+      message = `You've viewed ${echoChamberStatus.consecutiveCount} ${biasLabel} sources in a row. Consider reading a different perspective.`;
+    } else if (echoChamberStatus.isEchoChamber) {
+      // Alert for overall imbalance
+      const biasLabel = echoChamberStatus.dominantBias === 'left' ? 'left-leaning' : 'right-leaning';
+      const percent = echoChamberStatus.dominantBias === 'left'
+        ? echoChamberStatus.leftPercent
+        : echoChamberStatus.rightPercent;
+      title = 'Perspective Check';
+      message = `${percent}% of your recent reading has been ${biasLabel}. Diverse viewpoints lead to better understanding.`;
+    } else {
+      return; // No alert needed
+    }
+
+    this.lastEchoChamberAlert = now;
+
+    await this.showNotification({
+      type: 'echo_chamber',
+      title,
+      message,
+      icon: '⚖️'
+    });
+  }
+
+  /**
+   * Get weekly echo chamber analysis
+   */
+  getWeeklyEchoChamberAnalysis() {
+    const weekKey = this.getWeekKey();
+    const weekData = this.userData?.weeklyData?.[weekKey];
+
+    if (!weekData?.visits) {
+      return null;
+    }
+
+    return this.analyzePoliticalConsumption(weekData.visits);
   }
 
   handleTabActivation(activeInfo) {
@@ -747,7 +1014,23 @@ class MindsetTracker {
         const weekData = this.userData.weeklyData[weekKey];
         sendResponse({ weekData });
         break;
-        
+
+      case 'getEchoChamberAnalysis':
+        const ecWeekKey = request.weekKey || this.getWeekKey();
+        const ecWeekData = this.userData.weeklyData[ecWeekKey];
+        if (ecWeekData?.visits) {
+          const analysis = this.analyzePoliticalConsumption(ecWeekData.visits);
+          const realtimeStatus = this.checkRealtimeEchoChamber();
+          sendResponse({
+            weekly: analysis,
+            realtime: realtimeStatus,
+            recentHistory: this.recentBiasHistory
+          });
+        } else {
+          sendResponse({ weekly: null, realtime: null });
+        }
+        break;
+
       case 'updateSettings':
         if (request.settings && typeof request.settings === 'object') {
           this.userData.settings = { ...this.userData.settings, ...this.sanitizeSettings(request.settings) };

@@ -109,6 +109,88 @@
                 </div>
             </section>
 
+            <!-- Echo Chamber Check - Primary Feature -->
+            <section class="echo-chamber-section">
+                <h2>Perspective Balance</h2>
+                <div class="echo-chamber-container">
+                    <!-- Balance Meter -->
+                    <div class="balance-meter-container">
+                        <div class="balance-meter">
+                            <div class="balance-label left">Left</div>
+                            <div class="balance-scale">
+                                <div class="balance-track">
+                                    <div class="balance-indicator" id="balanceIndicator"></div>
+                                    <div class="balance-center-mark"></div>
+                                </div>
+                                <div class="balance-ticks">
+                                    <span>100%</span>
+                                    <span>50%</span>
+                                    <span>Balanced</span>
+                                    <span>50%</span>
+                                    <span>100%</span>
+                                </div>
+                            </div>
+                            <div class="balance-label right">Right</div>
+                        </div>
+                        <div class="balance-status" id="balanceStatus">
+                            <span class="status-icon">⚖️</span>
+                            <span class="status-text">Analyzing your reading patterns...</span>
+                        </div>
+                    </div>
+
+                    <!-- Breakdown Stats -->
+                    <div class="echo-chamber-stats">
+                        <div class="echo-stat">
+                            <div class="echo-stat-value" id="leftPercent">-</div>
+                            <div class="echo-stat-label">Left-leaning</div>
+                            <div class="echo-stat-bar">
+                                <div class="echo-stat-fill left" id="leftBar"></div>
+                            </div>
+                        </div>
+                        <div class="echo-stat">
+                            <div class="echo-stat-value" id="centerPercent">-</div>
+                            <div class="echo-stat-label">Center</div>
+                            <div class="echo-stat-bar">
+                                <div class="echo-stat-fill center" id="centerBar"></div>
+                            </div>
+                        </div>
+                        <div class="echo-stat">
+                            <div class="echo-stat-value" id="rightPercent">-</div>
+                            <div class="echo-stat-label">Right-leaning</div>
+                            <div class="echo-stat-bar">
+                                <div class="echo-stat-fill right" id="rightBar"></div>
+                            </div>
+                        </div>
+                        <div class="echo-stat unknown">
+                            <div class="echo-stat-value" id="unknownPercent">-</div>
+                            <div class="echo-stat-label">Unrated sources</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Echo Chamber Alert Box (if detected) -->
+                <div class="echo-chamber-alert" id="echoChamberAlert" style="display: none;">
+                    <div class="alert-icon">⚠️</div>
+                    <div class="alert-content">
+                        <h4>Echo Chamber Detected</h4>
+                        <p id="echoChamberAlertText">Your reading has been heavily one-sided. Consider exploring different perspectives.</p>
+                        <p class="echo-detail" id="recentConsumption"></p>
+                        <p class="echo-detail" id="consecutiveInfo" style="display: none;"></p>
+                    </div>
+                    <div class="alert-action">
+                        <button class="btn btn-primary" id="diversifyBtn">See Other Perspectives</button>
+                    </div>
+                </div>
+
+                <!-- Balanced Reading Message (if balanced) -->
+                <div class="balanced-message" id="balancedMessage" style="display: none;">
+                    <div class="balanced-icon">✅</div>
+                    <div class="balanced-text">
+                        <strong>Well balanced!</strong> You're getting diverse perspectives this week.
+                    </div>
+                </div>
+            </section>
+
             <!-- Content Breakdown -->
             <section class="content-breakdown">
                 <h2>Content Breakdown</h2>

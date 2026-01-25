@@ -155,6 +155,7 @@ class DashboardManager {
   updateDashboard() {
     this.updateReportHeader();
     this.updateScores();
+    this.updateEchoChamberSection();
     this.updateContentBreakdown();
     this.updateTimeAnalysis();
     this.updateSourceAnalysis();
@@ -692,6 +693,206 @@ class DashboardManager {
         }
       });
     });
+  }
+
+  // ==================== Echo Chamber Section ====================
+
+  async updateEchoChamberSection() {
+    try {
+      const response = await this.sendMessage({ action: 'getEchoChamberAnalysis' });
+      const analysis = response.weekly;
+      const realtimeStatus = response.realtime;
+
+      if (!analysis) {
+        this.showEchoChamberEmptyState();
+        return;
+      }
+
+      // Update balance indicator position
+      // Position: -100% = all left, 0 = center, 100% = all right
+      const leftPercent = analysis.percentages?.left || 0;
+      const rightPercent = analysis.percentages?.right || 0;
+      const centerPercent = analysis.percentages?.center || 0;
+      const unknownPercent = analysis.percentages?.unknown || 0;
+
+      // Calculate balance position (-50 to 50, with 0 being center)
+      let balancePosition = 0;
+      const knownPercent = leftPercent + rightPercent + centerPercent;
+      if (knownPercent > 0) {
+        // Weight: left = -1, center = 0, right = +1
+        balancePosition = ((rightPercent - leftPercent) / knownPercent) * 50;
+      }
+
+      const indicator = document.getElementById('balanceIndicator');
+      if (indicator) {
+        // Transform position: 50% is center, 0% is far left, 100% is far right
+        indicator.style.left = `${50 + balancePosition}%`;
+      }
+
+      // Update percentage displays
+      this.updatePercentageDisplay('leftPercent', 'leftBar', leftPercent);
+      this.updatePercentageDisplay('centerPercent', 'centerBar', centerPercent);
+      this.updatePercentageDisplay('rightPercent', 'rightBar', rightPercent);
+      this.updatePercentageDisplay('unknownPercent', 'unknownBar', unknownPercent);
+
+      // Update status text
+      const statusEl = document.getElementById('balanceStatus');
+      if (statusEl) {
+        const statusText = statusEl.querySelector('.status-text');
+        if (statusText) {
+          statusText.textContent = this.getBalanceStatusText(analysis);
+        }
+        statusEl.className = 'balance-status ' + this.getBalanceStatusClass(analysis);
+      }
+
+      // Show/hide echo chamber alert or balanced message
+      const alertEl = document.getElementById('echoChamberAlert');
+      const balancedEl = document.getElementById('balancedMessage');
+
+      if (analysis.isEchoChamber) {
+        // Show echo chamber warning
+        if (alertEl) {
+          alertEl.style.display = 'block';
+          const alertText = document.getElementById('echoChamberAlertText');
+          if (alertText) {
+            alertText.textContent = this.getEchoChamberAlertText(analysis);
+          }
+        }
+        if (balancedEl) balancedEl.style.display = 'none';
+
+        // Calculate dominant percentage from the bias that triggered echo chamber
+        const dominantPercentage = analysis.dominantBias === 'left' ? leftPercent :
+                                   analysis.dominantBias === 'right' ? rightPercent : 0;
+
+        // Update recent consumption info
+        const recentEl = document.getElementById('recentConsumption');
+        if (recentEl && analysis.dominantBias) {
+          recentEl.textContent = `${Math.round(dominantPercentage)}% of your weekly content leans ${analysis.dominantBias}`;
+        }
+
+        // Update consecutive info from realtime status
+        const consecutiveEl = document.getElementById('consecutiveInfo');
+        const consecutiveCount = realtimeStatus?.consecutiveCount || 0;
+        if (consecutiveEl && consecutiveCount >= 3) {
+          const realtimeBias = realtimeStatus?.dominantBias || analysis.dominantBias;
+          consecutiveEl.textContent = `You've viewed ${consecutiveCount} ${realtimeBias}-leaning sources in a row`;
+          consecutiveEl.style.display = 'block';
+        } else if (consecutiveEl) {
+          consecutiveEl.style.display = 'none';
+        }
+
+      } else if (this.isWellBalanced(analysis)) {
+        // Show balanced message
+        if (balancedEl) balancedEl.style.display = 'block';
+        if (alertEl) alertEl.style.display = 'none';
+      } else {
+        // Neither in echo chamber nor well balanced - hide both
+        if (alertEl) alertEl.style.display = 'none';
+        if (balancedEl) balancedEl.style.display = 'none';
+      }
+
+    } catch (error) {
+      console.error('Error updating echo chamber section:', error);
+      this.showEchoChamberEmptyState();
+    }
+  }
+
+  updatePercentageDisplay(percentId, barId, value) {
+    const percentEl = document.getElementById(percentId);
+    const barEl = document.getElementById(barId);
+
+    if (percentEl) {
+      percentEl.textContent = `${Math.round(value)}%`;
+    }
+    if (barEl) {
+      barEl.style.width = `${value}%`;
+    }
+  }
+
+  getBalanceStatusText(analysis) {
+    if (analysis.isEchoChamber) {
+      return `Echo chamber detected - ${analysis.dominantBias}-leaning`;
+    }
+
+    const leftPercent = analysis.percentages?.left || 0;
+    const rightPercent = analysis.percentages?.right || 0;
+    const centerPercent = analysis.percentages?.center || 0;
+
+    if (this.isWellBalanced(analysis)) {
+      return 'Well balanced perspective';
+    }
+
+    if (leftPercent > rightPercent + 20) {
+      return 'Leaning left';
+    } else if (rightPercent > leftPercent + 20) {
+      return 'Leaning right';
+    } else if (centerPercent > 50) {
+      return 'Mostly center sources';
+    }
+
+    return 'Moderately balanced';
+  }
+
+  getBalanceStatusClass(analysis) {
+    if (analysis.isEchoChamber) {
+      return 'danger';
+    }
+    if (this.isWellBalanced(analysis)) {
+      return 'good';
+    }
+    return 'warning';
+  }
+
+  isWellBalanced(analysis) {
+    const leftPercent = analysis.percentages?.left || 0;
+    const rightPercent = analysis.percentages?.right || 0;
+    const centerPercent = analysis.percentages?.center || 0;
+
+    // Well balanced if:
+    // 1. Left and right are within 15% of each other AND
+    // 2. No single viewpoint exceeds 50% AND
+    // 3. At least 20% center content
+    const leftRightDiff = Math.abs(leftPercent - rightPercent);
+    const maxSingleViewpoint = Math.max(leftPercent, rightPercent, centerPercent);
+
+    return leftRightDiff <= 15 && maxSingleViewpoint <= 50 && centerPercent >= 20;
+  }
+
+  getEchoChamberAlertText(analysis) {
+    const bias = analysis.dominantBias;
+    // Calculate dominant percentage from percentages object
+    const percent = bias === 'left' ? Math.round(analysis.percentages?.left || 0) :
+                    bias === 'right' ? Math.round(analysis.percentages?.right || 0) : 0;
+
+    if (percent >= 80) {
+      return `Strong echo chamber: ${percent}% of your content is ${bias}-leaning. Consider diversifying your sources.`;
+    } else if (percent >= 70) {
+      return `Echo chamber detected: ${percent}% ${bias}-leaning content. Try exploring different perspectives.`;
+    } else {
+      return `You may be in an echo chamber with ${percent}% ${bias}-leaning content.`;
+    }
+  }
+
+  showEchoChamberEmptyState() {
+    const statusEl = document.getElementById('balanceStatus');
+    if (statusEl) {
+      const statusText = statusEl.querySelector('.status-text');
+      if (statusText) {
+        statusText.textContent = 'Not enough data yet';
+      }
+      statusEl.className = 'balance-status';
+    }
+
+    // Reset bars to 0
+    ['left', 'center', 'right', 'unknown'].forEach(type => {
+      this.updatePercentageDisplay(`${type}Percent`, `${type}Bar`, 0);
+    });
+
+    // Hide alerts
+    const alertEl = document.getElementById('echoChamberAlert');
+    const balancedEl = document.getElementById('balancedMessage');
+    if (alertEl) alertEl.style.display = 'none';
+    if (balancedEl) balancedEl.style.display = 'none';
   }
 
   // ==================== Historical Trends Methods ====================
