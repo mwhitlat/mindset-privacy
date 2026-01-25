@@ -120,7 +120,8 @@ class MindsetTracker {
         weeklyReportDay: 0, // Sunday
         dailyTimeLimit: 180, // 3 hours in minutes
         educationalGoal: 20, // 20% educational content
-        sourceDiversityGoal: 10 // 10+ unique domains
+        sourceDiversityGoal: 10, // 10+ unique domains
+        echoChamberAlerts: true // Enable echo chamber detection alerts
       },
       scores: {
         overallHealth: 7.2,
@@ -1157,6 +1158,7 @@ class MindsetTracker {
         
       case 'clearAllData':
         this.userData = this.initializeUserData();
+        this.recentBiasHistory = []; // Clear echo chamber tracking data
         this.saveTrackingState();
         sendResponse({ success: true });
         break;
