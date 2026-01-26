@@ -432,6 +432,62 @@
                     </div>
 
                     <div class="settings-group">
+                        <h3>Content Warnings</h3>
+                        <div class="setting-item">
+                            <div class="setting-info">
+                                <h4>Warning Level</h4>
+                                <p>How aggressively to warn about problematic sources</p>
+                            </div>
+                            <div class="setting-control">
+                                <select id="interventionLevel" class="select-control">
+                                    <option value="minimal">Minimal - Status bar only</option>
+                                    <option value="balanced" selected>Balanced - Banners for concerning sources</option>
+                                    <option value="strict">Strict - Full warnings for low-credibility</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="setting-item">
+                            <div class="setting-info">
+                                <h4>Credibility Warnings</h4>
+                                <p>Warn when visiting low-credibility sources</p>
+                            </div>
+                            <div class="setting-control">
+                                <label class="toggle">
+                                    <input type="checkbox" id="showCredibilityWarnings" checked>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="setting-item">
+                            <div class="setting-info">
+                                <h4>Bias Warnings</h4>
+                                <p>Warn when visiting highly-biased sources</p>
+                            </div>
+                            <div class="setting-control">
+                                <label class="toggle">
+                                    <input type="checkbox" id="showBiasWarnings" checked>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="setting-item">
+                            <div class="setting-info">
+                                <h4>Full-Page Warnings</h4>
+                                <p>Show interstitial warnings for conspiracy and state media sites</p>
+                            </div>
+                            <div class="setting-control">
+                                <label class="toggle">
+                                    <input type="checkbox" id="enableInterstitials" checked>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-group">
                         <h3>Weekly Reports</h3>
                         <div class="setting-item">
                             <div class="setting-info">

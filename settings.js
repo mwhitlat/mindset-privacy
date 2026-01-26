@@ -189,6 +189,23 @@ class SettingsManager {
     document.getElementById('timeLimitNotification').addEventListener('change', (e) => {
       this.updateSetting('timeLimitNotification', e.target.checked);
     });
+
+    // Content Warnings settings
+    document.getElementById('interventionLevel').addEventListener('change', (e) => {
+      this.updateSetting('interventionLevel', e.target.value);
+    });
+
+    document.getElementById('showCredibilityWarnings').addEventListener('change', (e) => {
+      this.updateSetting('showCredibilityWarnings', e.target.checked);
+    });
+
+    document.getElementById('showBiasWarnings').addEventListener('change', (e) => {
+      this.updateSetting('showBiasWarnings', e.target.checked);
+    });
+
+    document.getElementById('enableInterstitials').addEventListener('change', (e) => {
+      this.updateSetting('enableInterstitials', e.target.checked);
+    });
   }
 
   setupRangeInputs() {
@@ -330,6 +347,20 @@ class SettingsManager {
     }
     if (settings.timeLimitNotification !== undefined) {
       document.getElementById('timeLimitNotification').checked = settings.timeLimitNotification;
+    }
+
+    // Content Warnings settings
+    if (settings.interventionLevel !== undefined) {
+      document.getElementById('interventionLevel').value = settings.interventionLevel;
+    }
+    if (settings.showCredibilityWarnings !== undefined) {
+      document.getElementById('showCredibilityWarnings').checked = settings.showCredibilityWarnings;
+    }
+    if (settings.showBiasWarnings !== undefined) {
+      document.getElementById('showBiasWarnings').checked = settings.showBiasWarnings;
+    }
+    if (settings.enableInterstitials !== undefined) {
+      document.getElementById('enableInterstitials').checked = settings.enableInterstitials;
     }
   }
 

@@ -121,7 +121,12 @@ class MindsetTracker {
         dailyTimeLimit: 180, // 3 hours in minutes
         educationalGoal: 20, // 20% educational content
         sourceDiversityGoal: 10, // 10+ unique domains
-        echoChamberAlerts: true // Enable echo chamber detection alerts
+        echoChamberAlerts: true, // Enable echo chamber detection alerts
+        // Content warning settings
+        interventionLevel: 'balanced', // 'minimal', 'balanced', 'strict'
+        showCredibilityWarnings: true,
+        showBiasWarnings: true,
+        enableInterstitials: true
       },
       scores: {
         overallHealth: 7.2,
@@ -545,6 +550,54 @@ class MindsetTracker {
     }
 
     return domain;
+  }
+
+  getAlternativeSources(currentBias, category) {
+    const alternatives = [];
+    const seenNames = new Set();
+
+    if (!this.mediaSources) return alternatives;
+
+    // Determine target biases based on current bias
+    let targetBiases = [];
+    if (currentBias && currentBias.includes('left')) {
+      targetBiases = ['center', 'right-center', 'right'];
+    } else if (currentBias && currentBias.includes('right')) {
+      targetBiases = ['center', 'left-center', 'left'];
+    } else {
+      // For center or unknown, suggest diverse options
+      targetBiases = ['left-center', 'center', 'right-center'];
+    }
+
+    // Find sources with opposite or center bias, preferably in same category
+    for (const [domain, info] of Object.entries(this.mediaSources)) {
+      // Only include news, fact-check, or science categories for alternatives
+      const validCategories = ['news', 'fact-check', 'science'];
+      if (!validCategories.includes(info.category)) continue;
+
+      // Check if bias matches target
+      if (targetBiases.includes(info.bias)) {
+        // Only include high-credibility sources
+        if (info.credibility >= 7) {
+          // Deduplicate by source name (e.g., AP has apnews.com and ap.org)
+          if (seenNames.has(info.name)) continue;
+          seenNames.add(info.name);
+
+          alternatives.push({
+            domain,
+            name: info.name,
+            bias: info.bias,
+            credibility: info.credibility,
+            category: info.category
+          });
+        }
+      }
+    }
+
+    // Sort by credibility and return top 3
+    return alternatives
+      .sort((a, b) => b.credibility - a.credibility)
+      .slice(0, 3);
   }
 
   assessTone(title, content = '') {
@@ -1187,6 +1240,14 @@ class MindsetTracker {
         const pageData = await this.analyzePageForTab(request.pageInfo);
         sendResponse({ pageData });
         break;
+
+      case 'getAlternativeSources':
+        const alternatives = this.getAlternativeSources(
+          request.currentBias,
+          request.category
+        );
+        sendResponse({ alternatives });
+        break;
         
       case 'generateReport':
         const report = this.generateWeeklyReport();
@@ -1412,8 +1473,17 @@ class MindsetTracker {
       'contentAnalysis', 'timeTracking', 'tabIndicators', 'trackNews', 'trackSocial',
       'trackEntertainment', 'trackEducational', 'trackProfessional',
       'smartNotifications', 'toneAlerts', 'credibilityWarnings', 'echoChamberAlerts', 'sessionInsights',
-      'weeklyReportNotification', 'dailyGoalNotification', 'timeLimitNotification'
+      'weeklyReportNotification', 'dailyGoalNotification', 'timeLimitNotification',
+      'showCredibilityWarnings', 'showBiasWarnings', 'enableInterstitials'
     ];
+
+    // Intervention level setting
+    if (settings.interventionLevel !== undefined) {
+      const validLevels = ['minimal', 'balanced', 'strict'];
+      if (validLevels.includes(settings.interventionLevel)) {
+        sanitized.interventionLevel = settings.interventionLevel;
+      }
+    }
     
     booleanSettings.forEach(setting => {
       if (settings[setting] !== undefined) {
@@ -1870,25 +1940,28 @@ class MindsetTracker {
   async analyzePageForTab(pageInfo) {
     try {
       const { domain, path, title } = pageInfo;
-      
+
       // Sanitize inputs
       const sanitizedDomain = this.sanitizeDomain(domain);
       const sanitizedPath = this.sanitizeText(path);
       const sanitizedTitle = this.sanitizeText(title);
-      
+
       // Analyze the page
-      const category = this.categorizeContent(sanitizedDomain, sanitizedPath, sanitizedTitle);
+      const sourceCategory = this.getSourceCategory(sanitizedDomain);
+      const category = sourceCategory || this.categorizeContent(sanitizedDomain, sanitizedPath, sanitizedTitle);
       const credibility = this.assessCredibility(sanitizedDomain);
       const politicalBias = this.assessPoliticalBias(sanitizedDomain);
       const tone = this.assessTone(sanitizedTitle);
-      
+      const sourceName = this.getSourceName(sanitizedDomain);
+
       return {
         category,
         credibility,
         politicalBias,
         tone,
         domain: sanitizedDomain,
-        title: sanitizedTitle
+        title: sanitizedTitle,
+        sourceName
       };
     } catch (error) {
       console.error('Error analyzing page for tab indicator:', error);
@@ -1898,7 +1971,8 @@ class MindsetTracker {
         politicalBias: 'unknown',
         tone: 'neutral',
         domain: pageInfo.domain,
-        title: pageInfo.title
+        title: pageInfo.title,
+        sourceName: pageInfo.domain
       };
     }
   }
