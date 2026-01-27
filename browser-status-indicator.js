@@ -10,6 +10,12 @@ class BrowserStatusIndicator {
     this.bannerDismissed = false;
     this.interstitialShown = false;
     this.continueCountdownInterval = null;
+    // Auto-hide state
+    this.isStatusBarVisible = false;
+    this.isStatusBarMinimized = false;
+    this.autoHideTimeout = null;
+    this.hoverZone = null;
+    this.minimizedIndicator = null;
     this.init();
   }
 
@@ -169,6 +175,15 @@ class BrowserStatusIndicator {
     if (!this.statusElement) return;
     this.statusElement.style.borderTop = '3px solid #FF9800';
     this.statusElement.style.background = 'linear-gradient(90deg, rgba(255,152,0,0.2) 0%, rgba(0,0,0,0.8) 100%)';
+
+    // For Tier 1 warnings, show the bar and extend the timer
+    this.showStatusBar();
+    this.cancelAutoHideTimer();
+    this.autoHideTimeout = setTimeout(() => {
+      if (!this.isStatusBarMinimized) {
+        this.hideStatusBar();
+      }
+    }, 10000); // Keep visible for 10 seconds on warnings
   }
 
   async getAlternatives(pageData) {
@@ -570,6 +585,14 @@ class BrowserStatusIndicator {
       // Reset interstitial flag for new page
       this.interstitialShown = false;
 
+      // Reset minimized state for new page (so users see bar on new pages)
+      if (this.isStatusBarMinimized) {
+        this.isStatusBarMinimized = false;
+        if (this.minimizedIndicator) {
+          this.minimizedIndicator.style.display = 'none';
+        }
+      }
+
       // Extract basic page info
       const pageInfo = {
         domain: window.location.hostname,
@@ -623,16 +646,21 @@ class BrowserStatusIndicator {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       font-size: 11px;
       display: flex;
-      flex-direction: column;
+      flex-direction: row;
       align-items: center;
       justify-content: center;
       z-index: 999999;
-      pointer-events: none;
+      pointer-events: auto;
       opacity: 0;
-      transition: opacity 0.3s ease;
+      transition: opacity 0.3s ease, transform 0.3s ease;
       backdrop-filter: blur(10px);
       border-top: 1px solid rgba(255,255,255,0.1);
+      transform: translateY(0);
     `;
+
+    // Create content container
+    this.contentContainer = document.createElement('div');
+    this.contentContainer.style.cssText = 'display: flex; flex-direction: column; align-items: center; flex: 1;';
 
     // Add rows for short-term and long-term feedback
     this.shortTermRow = document.createElement('div');
@@ -640,19 +668,180 @@ class BrowserStatusIndicator {
     this.longTermRow = document.createElement('div');
     this.longTermRow.style.cssText = 'display: flex; align-items: center; gap: 12px; margin: 2px 0; opacity: 0.85; font-size: 10px;';
 
-    this.statusElement.appendChild(this.shortTermRow);
-    this.statusElement.appendChild(this.longTermRow);
+    this.contentContainer.appendChild(this.shortTermRow);
+    this.contentContainer.appendChild(this.longTermRow);
+
+    // Add minimize button
+    this.minimizeBtn = document.createElement('button');
+    this.minimizeBtn.id = 'mindset-minimize-btn';
+    this.minimizeBtn.innerHTML = '✕';
+    this.minimizeBtn.title = 'Hide status bar';
+    this.minimizeBtn.style.cssText = `
+      position: absolute;
+      right: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: rgba(255,255,255,0.1);
+      border: none;
+      color: rgba(255,255,255,0.6);
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      cursor: pointer;
+      font-size: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.2s, color 0.2s;
+    `;
+    this.minimizeBtn.addEventListener('click', () => this.minimizeStatusBar());
+    this.minimizeBtn.addEventListener('mouseover', () => {
+      this.minimizeBtn.style.background = 'rgba(255,255,255,0.2)';
+      this.minimizeBtn.style.color = 'white';
+    });
+    this.minimizeBtn.addEventListener('mouseout', () => {
+      this.minimizeBtn.style.background = 'rgba(255,255,255,0.1)';
+      this.minimizeBtn.style.color = 'rgba(255,255,255,0.6)';
+    });
+
+    this.statusElement.appendChild(this.contentContainer);
+    this.statusElement.appendChild(this.minimizeBtn);
     document.body.appendChild(this.statusElement);
-    
-    // Show indicator after a short delay
+
+    // Create hover zone for showing bar when hidden
+    this.createHoverZone();
+
+    // Create minimized indicator
+    this.createMinimizedIndicator();
+
+    // Show indicator after a short delay, then auto-hide
     setTimeout(() => {
-      if (this.statusElement) {
-        this.statusElement.style.opacity = '1';
+      if (this.statusElement && !this.isStatusBarMinimized) {
+        this.showStatusBar();
+        this.startAutoHideTimer();
       }
     }, 1000);
-    
+
+    // Pause auto-hide when hovering over the bar
+    this.statusElement.addEventListener('mouseenter', () => {
+      this.cancelAutoHideTimer();
+    });
+    this.statusElement.addEventListener('mouseleave', () => {
+      if (this.isStatusBarVisible && !this.isStatusBarMinimized) {
+        this.startAutoHideTimer();
+      }
+    });
+
     // Initial state
     this.updateStatusIndicator();
+  }
+
+  createHoverZone() {
+    // Invisible zone at bottom of screen to trigger bar reappearance
+    this.hoverZone = document.createElement('div');
+    this.hoverZone.id = 'mindset-hover-zone';
+    this.hoverZone.style.cssText = `
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 10px;
+      z-index: 999998;
+      pointer-events: auto;
+    `;
+    this.hoverZone.addEventListener('mouseenter', () => {
+      if (!this.isStatusBarVisible && !this.isStatusBarMinimized) {
+        this.showStatusBar();
+        this.startAutoHideTimer();
+      }
+    });
+    document.body.appendChild(this.hoverZone);
+  }
+
+  createMinimizedIndicator() {
+    // Small pill that shows when bar is minimized
+    this.minimizedIndicator = document.createElement('div');
+    this.minimizedIndicator.id = 'mindset-minimized-indicator';
+    this.minimizedIndicator.innerHTML = '🧠';
+    this.minimizedIndicator.title = 'Show Mindset status bar';
+    this.minimizedIndicator.style.cssText = `
+      position: fixed;
+      bottom: 10px;
+      right: 10px;
+      width: 32px;
+      height: 32px;
+      background: rgba(0,0,0,0.7);
+      border-radius: 50%;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      z-index: 999997;
+      font-size: 16px;
+      transition: transform 0.2s, background 0.2s;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    `;
+    this.minimizedIndicator.addEventListener('click', () => this.restoreStatusBar());
+    this.minimizedIndicator.addEventListener('mouseenter', () => {
+      this.minimizedIndicator.style.transform = 'scale(1.1)';
+      this.minimizedIndicator.style.background = 'rgba(0,0,0,0.85)';
+    });
+    this.minimizedIndicator.addEventListener('mouseleave', () => {
+      this.minimizedIndicator.style.transform = 'scale(1)';
+      this.minimizedIndicator.style.background = 'rgba(0,0,0,0.7)';
+    });
+    document.body.appendChild(this.minimizedIndicator);
+  }
+
+  showStatusBar() {
+    if (this.statusElement) {
+      this.statusElement.style.opacity = '1';
+      this.statusElement.style.transform = 'translateY(0)';
+      this.isStatusBarVisible = true;
+    }
+  }
+
+  hideStatusBar() {
+    if (this.statusElement) {
+      this.statusElement.style.opacity = '0';
+      this.statusElement.style.transform = 'translateY(100%)';
+      this.isStatusBarVisible = false;
+    }
+  }
+
+  minimizeStatusBar() {
+    this.isStatusBarMinimized = true;
+    this.cancelAutoHideTimer();
+    this.hideStatusBar();
+    if (this.minimizedIndicator) {
+      this.minimizedIndicator.style.display = 'flex';
+    }
+  }
+
+  restoreStatusBar() {
+    this.isStatusBarMinimized = false;
+    if (this.minimizedIndicator) {
+      this.minimizedIndicator.style.display = 'none';
+    }
+    this.showStatusBar();
+    this.startAutoHideTimer();
+  }
+
+  startAutoHideTimer() {
+    this.cancelAutoHideTimer();
+    this.autoHideTimeout = setTimeout(() => {
+      if (!this.isStatusBarMinimized) {
+        this.hideStatusBar();
+      }
+    }, 5000); // Hide after 5 seconds
+  }
+
+  cancelAutoHideTimer() {
+    if (this.autoHideTimeout) {
+      clearTimeout(this.autoHideTimeout);
+      this.autoHideTimeout = null;
+    }
   }
 
   updateStatusIndicator() {
@@ -754,8 +943,15 @@ class BrowserStatusIndicator {
 
   // Public method to show/hide indicator
   setVisibility(visible) {
-    if (this.statusElement) {
-      this.statusElement.style.opacity = visible ? '1' : '0';
+    if (visible) {
+      this.isStatusBarMinimized = false;
+      if (this.minimizedIndicator) {
+        this.minimizedIndicator.style.display = 'none';
+      }
+      this.showStatusBar();
+      this.startAutoHideTimer();
+    } else {
+      this.hideStatusBar();
     }
   }
 }
