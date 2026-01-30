@@ -15,9 +15,11 @@ A comprehensive guide to understanding how the Mindset browser extension works, 
 7. [File-by-File Breakdown](#7-file-by-file-breakdown)
 8. [Data Flow Examples](#8-data-flow-examples)
 9. [The Warning System](#9-the-warning-system)
-10. [Key Programming Concepts](#10-key-programming-concepts)
-11. [Debugging Tips](#11-debugging-tips)
-12. [Common Patterns to Reuse](#12-common-patterns-to-reuse)
+10. [Auto-Hide Status Bar](#10-auto-hide-status-bar)
+11. [Security Patterns](#11-security-patterns)
+12. [Key Programming Concepts](#12-key-programming-concepts)
+13. [Debugging Tips](#13-debugging-tips)
+14. [Common Patterns to Reuse](#14-common-patterns-to-reuse)
 
 ---
 
@@ -482,6 +484,12 @@ const response = await chrome.tabs.sendMessage(tabId, { action: 'getPageContent'
 | `showInterstitial(pageData, alternatives)` | Shows the full-page warning |
 | `showAlternativesPanel(alternatives)` | Shows alternative sources modal |
 | `getAlternatives(pageData)` | Requests alternatives from background |
+| `showStatusBar()` | Fades in the status bar |
+| `hideStatusBar()` | Fades out the status bar |
+| `minimizeStatusBar()` | Manually hides bar, shows 🧠 pill |
+| `restoreStatusBar()` | Restores bar from minimized state |
+| `startAutoHideTimer()` | Starts 5-second auto-hide countdown |
+| `escapeHtml(text)` | Escapes HTML entities (XSS prevention) |
 
 **DOM Manipulation Pattern:**
 
@@ -742,7 +750,336 @@ getAlternativeSources(currentBias, category) {
 
 ---
 
-## 10. Key Programming Concepts
+## 10. Auto-Hide Status Bar
+
+The status bar auto-hides to avoid blocking page content (like chat input boxes). This is a common UX pattern for persistent UI elements.
+
+### How It Works
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Page loads                                                      │
+│       │                                                          │
+│       ▼                                                          │
+│  Status bar appears (opacity: 1)                                 │
+│       │                                                          │
+│       ▼ (after 5 seconds)                                        │
+│  Auto-hide timer fires → bar fades out (opacity: 0)              │
+│       │                                                          │
+│       ▼                                                          │
+│  User hovers near bottom edge (10px zone)                        │
+│       │                                                          │
+│       ▼                                                          │
+│  Bar reappears → timer restarts                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Key Components
+
+| Component | Purpose |
+|-----------|---------|
+| `statusElement` | The main status bar |
+| `hoverZone` | Invisible 10px area at bottom to detect hover |
+| `minimizedIndicator` | Small 🧠 pill shown when manually minimized |
+| `minimizeBtn` | ✕ button to manually hide the bar |
+
+### State Variables
+
+```javascript
+this.isStatusBarVisible = false;    // Is bar currently shown?
+this.isStatusBarMinimized = false;  // Did user manually minimize?
+this.autoHideTimeout = null;        // Timer reference for auto-hide
+```
+
+### Key Methods
+
+```javascript
+// Show the bar with fade-in
+showStatusBar() {
+  this.statusElement.style.opacity = '1';
+  this.statusElement.style.transform = 'translateY(0)';
+  this.isStatusBarVisible = true;
+}
+
+// Hide the bar with fade-out
+hideStatusBar() {
+  this.statusElement.style.opacity = '0';
+  this.statusElement.style.transform = 'translateY(100%)';
+  this.isStatusBarVisible = false;
+}
+
+// Start the 5-second auto-hide timer
+startAutoHideTimer() {
+  this.cancelAutoHideTimer();
+  this.autoHideTimeout = setTimeout(() => {
+    if (!this.isStatusBarMinimized) {
+      this.hideStatusBar();
+    }
+  }, 5000);
+}
+
+// Cancel the timer (e.g., when user hovers over bar)
+cancelAutoHideTimer() {
+  if (this.autoHideTimeout) {
+    clearTimeout(this.autoHideTimeout);
+    this.autoHideTimeout = null;
+  }
+}
+```
+
+### Hover Zone Pattern
+
+The hover zone is an invisible element that detects when the user's mouse approaches the bottom of the screen:
+
+```javascript
+createHoverZone() {
+  this.hoverZone = document.createElement('div');
+  this.hoverZone.style.cssText = `
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 10px;           // Small trigger area
+    z-index: 999998;        // Below status bar
+    pointer-events: auto;   // Catch mouse events
+  `;
+
+  this.hoverZone.addEventListener('mouseenter', () => {
+    if (!this.isStatusBarVisible && !this.isStatusBarMinimized) {
+      this.showStatusBar();
+      this.startAutoHideTimer();
+    }
+  });
+
+  document.body.appendChild(this.hoverZone);
+}
+```
+
+### Manual Minimize vs Auto-Hide
+
+- **Auto-hide**: Bar hides after timer, reappears on hover
+- **Manual minimize**: User clicks ✕, bar stays hidden until they click the 🧠 pill
+
+```javascript
+minimizeStatusBar() {
+  this.isStatusBarMinimized = true;  // Prevents auto-show on hover
+  this.hideStatusBar();
+  this.minimizedIndicator.style.display = 'flex';  // Show pill
+}
+
+restoreStatusBar() {
+  this.isStatusBarMinimized = false;
+  this.minimizedIndicator.style.display = 'none';  // Hide pill
+  this.showStatusBar();
+  this.startAutoHideTimer();
+}
+```
+
+### Reset on Navigation
+
+When the user navigates to a new page, the minimized state resets so they see the bar fresh:
+
+```javascript
+async getPageData() {
+  // Reset minimized state for new page
+  if (this.isStatusBarMinimized) {
+    this.isStatusBarMinimized = false;
+    this.minimizedIndicator.style.display = 'none';
+  }
+  // ... rest of method
+}
+```
+
+---
+
+## 11. Security Patterns
+
+Security is critical for browser extensions since they have access to all websites the user visits.
+
+### XSS Prevention with escapeHtml
+
+**Problem:** Using `innerHTML` with user-derived content can allow malicious scripts to execute.
+
+**Solution:** Escape HTML entities before inserting into innerHTML.
+
+```javascript
+// The escapeHtml helper function
+escapeHtml(text) {
+  if (typeof text !== 'string') return '';
+  const div = document.createElement('div');
+  div.textContent = text;  // textContent automatically escapes
+  return div.innerHTML;    // Get the escaped version
+}
+
+// Usage - ALWAYS escape user-derived content
+const safeSourceName = this.escapeHtml(sourceName);
+this.warningBanner.innerHTML = `
+  <span>${safeSourceName} has low credibility.</span>
+`;
+```
+
+**What it prevents:**
+```javascript
+// Without escaping, this could execute:
+sourceName = '<script>alert("hacked")</script>';
+
+// With escaping, it becomes harmless text:
+// &lt;script&gt;alert("hacked")&lt;/script&gt;
+```
+
+### When to Use escapeHtml
+
+| Data Source | Escape? | Why |
+|-------------|---------|-----|
+| Page titles | ✅ Yes | Comes from websites, could be malicious |
+| Source names (fallback to domain) | ✅ Yes | Domain could have special characters |
+| Media database names | ⚠️ Recommended | Controlled data, but good practice |
+| Hardcoded strings | ❌ No | You control the content |
+| Numbers/booleans | ❌ No | Not strings, can't contain HTML |
+
+### Input Sanitization
+
+Multiple layers of sanitization protect against malicious input:
+
+```javascript
+// In content.js - sanitize text extracted from pages
+sanitizeText(text) {
+  if (typeof text !== 'string') return '';
+  return text
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')  // Remove scripts
+    .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '')  // Remove iframes
+    .replace(/javascript:/gi, '')      // Remove javascript: URLs
+    .replace(/on\w+\s*=/gi, '')        // Remove event handlers (onclick, etc.)
+    .substring(0, 5000);               // Limit length
+}
+
+// In background.js - sanitize domains
+sanitizeDomain(domain) {
+  return domain.toLowerCase().replace(/[^a-z0-9.-]/g, '');
+}
+
+// In background.js - validate URLs
+sanitizeUrl(url) {
+  const parsed = new URL(url);
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return null;  // Reject non-HTTP protocols
+  }
+  return parsed.href;
+}
+```
+
+### Per-User Encryption Salt
+
+**Problem:** A fixed salt for password-based encryption means all users have the same salt, making rainbow table attacks easier.
+
+**Solution:** Generate a random salt per user when encryption is first enabled.
+
+```javascript
+async deriveKeyFromPassword(password, salt = null) {
+  let saltBytes;
+
+  if (salt) {
+    saltBytes = salt;
+  } else if (this.encryptionSalt) {
+    // Use stored salt (decoded from base64)
+    saltBytes = new Uint8Array(
+      atob(this.encryptionSalt).split('').map(char => char.charCodeAt(0))
+    );
+  } else {
+    // Generate new random 16-byte salt
+    saltBytes = crypto.getRandomValues(new Uint8Array(16));
+    // Store as base64 for persistence
+    this.encryptionSalt = btoa(String.fromCharCode(...saltBytes));
+  }
+
+  // ... derive key using saltBytes
+}
+```
+
+**Storage:** The salt is stored alongside encrypted data:
+
+```javascript
+await chrome.storage.local.set({
+  encryptedData: encryptedData,
+  encryptionEnabled: true,
+  encryptionSalt: this.encryptionSalt  // Per-user salt
+});
+```
+
+### Content Security Policy (CSP)
+
+Defined in `manifest.json`, CSP restricts what code can execute:
+
+```json
+"content_security_policy": {
+  "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline';"
+}
+```
+
+| Directive | Meaning |
+|-----------|---------|
+| `script-src 'self'` | Only scripts from the extension itself can run |
+| `object-src 'self'` | Only objects (Flash, etc.) from extension allowed |
+| `style-src 'self' 'unsafe-inline'` | Styles from extension + inline styles allowed |
+
+### Request Validation
+
+All incoming messages are validated before processing:
+
+```javascript
+handleMessage(request, sender, sendResponse) {
+  // Validate request exists and is an object
+  if (!request || typeof request !== 'object') {
+    sendResponse({ error: 'Invalid request' });
+    return true;
+  }
+
+  // Validate action is a string
+  if (typeof request.action !== 'string') {
+    sendResponse({ error: 'Invalid action' });
+    return true;
+  }
+
+  // ... handle valid requests
+}
+```
+
+### Settings Validation
+
+All user settings are validated and sanitized:
+
+```javascript
+sanitizeSettings(settings) {
+  const sanitized = {};
+
+  // Validate numeric ranges
+  if (settings.dataRetention !== undefined) {
+    const retention = parseInt(settings.dataRetention);
+    if ([0, 7, 30, 90, 365].includes(retention)) {
+      sanitized.dataRetention = retention;
+    }
+  }
+
+  // Validate enum values
+  if (settings.interventionLevel !== undefined) {
+    const validLevels = ['minimal', 'balanced', 'strict'];
+    if (validLevels.includes(settings.interventionLevel)) {
+      sanitized.interventionLevel = settings.interventionLevel;
+    }
+  }
+
+  // Convert to boolean (prevents truthy/falsy issues)
+  if (settings.showCredibilityWarnings !== undefined) {
+    sanitized.showCredibilityWarnings = Boolean(settings.showCredibilityWarnings);
+  }
+
+  return sanitized;  // Only validated fields are returned
+}
+```
+
+---
+
+## 12. Key Programming Concepts
 
 ### Async/Await
 
@@ -897,7 +1234,7 @@ map.delete('key');
 
 ---
 
-## 11. Debugging Tips
+## 13. Debugging Tips
 
 ### Chrome DevTools for Extensions
 
@@ -958,7 +1295,7 @@ After editing code:
 
 ---
 
-## 12. Common Patterns to Reuse
+## 14. Common Patterns to Reuse
 
 ### Pattern 1: Message Handler Switch
 
@@ -1071,6 +1408,62 @@ getUniqueItems(items, keyFn) {
 
 // Usage
 const uniqueSources = getUniqueItems(sources, s => s.name);
+```
+
+### Pattern 6: Safe innerHTML with escapeHtml
+
+```javascript
+// Helper function - add to any class that uses innerHTML
+escapeHtml(text) {
+  if (typeof text !== 'string') return '';
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+// Usage - escape any user-derived content
+showMessage(userInput) {
+  const safeInput = this.escapeHtml(userInput);
+  this.element.innerHTML = `<p>You said: ${safeInput}</p>`;
+}
+```
+
+### Pattern 7: Auto-Hide UI Element
+
+```javascript
+// State variables
+this.isVisible = false;
+this.hideTimeout = null;
+
+// Show with auto-hide timer
+show() {
+  this.element.style.opacity = '1';
+  this.isVisible = true;
+  this.startHideTimer();
+}
+
+// Hide
+hide() {
+  this.element.style.opacity = '0';
+  this.isVisible = false;
+}
+
+// Timer management
+startHideTimer(delay = 5000) {
+  this.cancelHideTimer();
+  this.hideTimeout = setTimeout(() => this.hide(), delay);
+}
+
+cancelHideTimer() {
+  if (this.hideTimeout) {
+    clearTimeout(this.hideTimeout);
+    this.hideTimeout = null;
+  }
+}
+
+// Pause timer on hover
+this.element.addEventListener('mouseenter', () => this.cancelHideTimer());
+this.element.addEventListener('mouseleave', () => this.startHideTimer());
 ```
 
 ---
